@@ -18,11 +18,13 @@ uniform mat4 V;
 uniform mat4 M;
 uniform mat4 inverseTransposeM;
 uniform vec3 LightPosition_worldspace;
+uniform bool renderedTexture;
 
 void main(){
 
 	// Output position of the vertex, in clip space : MVP * position
 	gl_Position =  MVP * vec4(vertexPosition_modelspace,1);
+
 	Position_worldspace = (MVP * vec4(vertexPosition_modelspace,1)).xyz;
 
 	// Vector that goes from the vertex to the camera, in camera space.
@@ -39,5 +41,11 @@ void main(){
 
 
 	// UV of the vertex. No special space for this one.
-	UV = vertexUV;
+	if(renderedTexture)
+	{
+		UV = (vertexPosition_modelspace.xy+vec2(1,1))/2.0;
+	}
+	else{
+		UV = vertexUV;
+	}
 }

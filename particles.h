@@ -14,8 +14,5 @@ struct Particle{
 	}
 };
 
-int FindUnusedParticle(Particle *ParticlesContainer, int LastUsedParticle);
-void SortParticles(Particle *ParticlesContainer);
-
 
 #endif

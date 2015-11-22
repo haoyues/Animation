@@ -48,7 +48,7 @@ PROGRAM	          = main
 CSRCS         =
 
 # Define all C++ source files here
-CPPSRCS       = main.cpp vector.cpp objloader.cpp shader.cpp texture.cpp particles.cpp
+CPPSRCS       = main.cpp vector.cpp objloader.cpp shader.cpp texture.cpp
 
 ##############################################################################
 # Define additional rules that make should know about in order to compile our

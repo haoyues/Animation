@@ -11,7 +11,7 @@ uniform vec3 LightPosition_worldspace;
 uniform sampler2D myTextureSampler;
 
 void main(){
-	vec3 LightColor = vec3(1,1,1);
+	/*vec3 LightColor = vec3(1,1,1);
 	float LightPower = 50.0f;
 
 	// Material properties
@@ -49,7 +49,7 @@ void main(){
 		// Diffuse : "color" of the object
 		MaterialDiffuseColor * LightColor * LightPower * cosTheta / (distance*distance) +
 		// Specular : reflective highlight, like a mirror
-		MaterialSpecularColor * LightColor * LightPower * pow(cosAlpha,5) / (distance*distance);
+		MaterialSpecularColor * LightColor * LightPower * pow(cosAlpha,5) / (distance*distance);*/
 
 	// Output color = color of the texture at the specified UV
 	gl_FragColor = texture2D( myTextureSampler, UV );

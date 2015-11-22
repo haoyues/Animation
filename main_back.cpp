@@ -1,3 +1,40 @@
+/***********************************************************
+             CSC418, FALL 2009
+
+                 penguin.cpp
+                 author: Mike Pratscher
+                 based on code by: Eron Steger, J. Radulovich
+
+		Main source file for assignment 2
+		Uses OpenGL, GLUT and GLUI libraries
+
+    Instructions:
+        Please read the assignment page to determine
+        exactly what needs to be implemented.  Then read
+        over this file and become acquainted with its
+        design. In particular, see lines marked 'README'.
+
+		Be sure to also look over keyframe.h and vector.h.
+		While no changes are necessary to these files, looking
+		them over will allow you to better understand their
+		functionality and capabilites.
+
+        Add source code where it appears appropriate. In
+        particular, see lines marked 'TODO'.
+
+        You should not need to change the overall structure
+        of the program. However it should be clear what
+        your changes do, and you should use sufficient comments
+        to explain your code.  While the point of the assignment
+        is to draw and animate the character, you will
+        also be marked based on your design.
+
+***********************************************************/
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <OpenGL/gl.h>
 #include <OpenGL/glu.h>
 #include <OpenGL/glext.h>
@@ -175,12 +212,7 @@ void motion(int x, int y);
 // Functions to help draw the object
 Vector getInterpolatedJointDOFS(float time);
 
-void drawObj(GLuint vertexBuffer,
-			 GLuint uvBuffer,
-			 GLuint normalBuffer,
-			 std::vector<glm::vec3> vertices);
 void drawOlaf();
-void drawSnow();
 void simulateParticles(int &ParticlesCount);
 //void background();
 
@@ -195,6 +227,7 @@ Particle ParticlesContainer[MaxParticles];
 int LastUsedParticle = 0;
 
 GLuint programID = -1;
+GLuint renderedProgramID = -1;
 
 GLuint vertexbuffer_landscape;
 GLuint uvbuffer_landscape;
@@ -220,9 +253,8 @@ GLuint modelMatrixID;
 GLuint inverseTransposeModelMatrixID;
 GLuint vertexNormal_modelspaceID;
 GLuint lightID;
-GLuint isRenderedTextureID;
-GLuint isParticleID;
 
+GLuint renderedMatrixID;
 GLuint vertexUVID;
 GLuint textureID;
 GLuint renderedTextureID;
@@ -241,7 +273,6 @@ GLuint particlesTextureID;
 GLuint squareVerticesID;
 GLuint xyzsID;
 GLuint colorID;
-GLuint particlesTexture;
 
 static GLfloat* g_particule_position_size_data = new GLfloat[MaxParticles * 4];
 static GLubyte* g_particule_color_data         = new GLubyte[MaxParticles * 4];
@@ -272,31 +303,6 @@ std::vector<glm::vec2> uvs_background;
 std::vector<glm::vec3> normals_background;
 
 
-// Finds a Particle in ParticlesContainer which isn't used yet.
-// (i.e. life < 0);
-int FindUnusedParticle(){
-
-	for(int i=LastUsedParticle; i<MaxParticles; i++){
-		if (ParticlesContainer[i].life < 0){
-			LastUsedParticle = i;
-			return i;
-		}
-	}
-
-	for(int i=0; i<LastUsedParticle; i++){
-		if (ParticlesContainer[i].life < 0){
-			LastUsedParticle = i;
-			return i;
-		}
-	}
-
-	return 0; // All particles are taken, override the first one
-}
-
-void SortParticles(){
-	std::sort(&ParticlesContainer[0], &ParticlesContainer[MaxParticles]);
-}
-
 void setupShaders()
 {
     /******************* SIMPLE SHADER **********************/
@@ -310,49 +316,40 @@ void setupShaders()
     textureID  = glGetUniformLocation(programID, "myTextureSampler");
     lightID = glGetUniformLocation(programID, "LightPosition_worldspace");
     inverseTransposeModelMatrixID = glGetUniformLocation(programID, "inverseTransposeM");
-	isRenderedTextureID = glGetUniformLocation(programID, "renderedTexture");
-
     // Get a handle for our buffers
 	vertexPosition_modelspaceID = glGetAttribLocation(programID, "vertexPosition_modelspace");
 	vertexUVID = glGetAttribLocation(programID, "vertexUV");
     vertexNormal_modelspaceID = glGetAttribLocation(programID, "vertexNormal_modelspace");
+
+    /******************* RENDER TO TEXTURE SHADER **********************/
+    renderedProgramID = LoadShaders("shader/renderedTexture.vertexshader", "shader/renderedTexture.fragmentshader");
+    printf("rendered shader program is: %d\n", renderedProgramID);
+
+    renderedTextureID = glGetUniformLocation(renderedProgramID, "renderedTexture");
+    renderedMatrixID = glGetUniformLocation(renderedProgramID, "MVP");
+    rendered_vertexPosID = glGetAttribLocation(renderedProgramID, "vertexPosition_modelspace");
 
     /************************* PARTICLES SHADER *************************/
 	// Create and compile our GLSL program from the shaders
 	particlesProgramID = LoadShaders( "shader/particles.vertexshader", "shader/particles.fragmentshader" );
 
 	// Vertex shader
-	CameraRight_worldspace_ID  = glGetUniformLocation(particlesProgramID, "CameraRight_worldspace");
-	CameraUp_worldspace_ID  = glGetUniformLocation(particlesProgramID, "CameraUp_worldspace");
-	ViewProjMatrixID = glGetUniformLocation(particlesProgramID, "VP");
+	CameraRight_worldspace_ID  = glGetUniformLocation(programID, "CameraRight_worldspace");
+	CameraUp_worldspace_ID  = glGetUniformLocation(programID, "CameraUp_worldspace");
+	ViewProjMatrixID = glGetUniformLocation(programID, "VP");
 
-	particlesTextureID  = glGetUniformLocation(particlesProgramID, "myTextureSampler");
+	// fragment shader
+	particlesTextureID  = glGetUniformLocation(programID, "myTextureSampler");
+
 	// Get a handle for our buffers
-	squareVerticesID = glGetAttribLocation(particlesProgramID, "squareVertices");
-	xyzsID = glGetAttribLocation(particlesProgramID, "xyzs");
-	colorID = glGetAttribLocation(particlesProgramID, "color");
+	squareVerticesID = glGetAttribLocation(programID, "squareVertices");
+	xyzsID = glGetAttribLocation(programID, "xyzs");
+	colorID = glGetAttribLocation(programID, "color");
 
-	for(int i=0; i<MaxParticles; i++){
+	for(int i=0; i < MaxParticles; i++){
 		ParticlesContainer[i].life = -1.0f;
 		ParticlesContainer[i].cameradistance = -1.0f;
 	}
-
-	particlesTexture = loadDDS("particle.DDS");
-	glGenBuffers(1, &particles_vertex_buffer);
-	glBindBuffer(GL_ARRAY_BUFFER, particles_vertex_buffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(g_vertex_buffer_data), g_vertex_buffer_data, GL_STATIC_DRAW);
-
-	// The VBO containing the positions and sizes of the particles
-	glGenBuffers(1, &particles_position_buffer);
-	glBindBuffer(GL_ARRAY_BUFFER, particles_position_buffer);
-	// Initialize with empty (NULL) buffer : it will be updated later, each frame.
-	glBufferData(GL_ARRAY_BUFFER, MaxParticles * 4 * sizeof(GLfloat), NULL, GL_STREAM_DRAW);
-
-	// The VBO containing the colors of the particles
-	glGenBuffers(1, &particles_color_buffer);
-	glBindBuffer(GL_ARRAY_BUFFER, particles_color_buffer);
-	// Initialize with empty (NULL) buffer : it will be updated later, each frame.
-	glBufferData(GL_ARRAY_BUFFER, MaxParticles * 4 * sizeof(GLubyte), NULL, GL_STREAM_DRAW);
 }
 
 void setupTextures()
@@ -464,6 +461,79 @@ void setupObjects()
 	glBufferData(GL_ARRAY_BUFFER, MaxParticles * 4 * sizeof(GLubyte), NULL, GL_STREAM_DRAW);
 
 }
+// main() function
+// Initializes the user interface (and any user variables)
+// then hands over control to the event handler, which calls
+// display() whenever the GL window needs to be redrawn.
+int main(int argc, char** argv)
+{
+
+    // Process program arguments
+    if(argc != 3) {
+        printf("Usage: demo [width] [height]\n");
+        printf("Using 640x480 window by default...\n");
+        Win[0] = 1024;
+        Win[1] = 768;
+    } else {
+        Win[0] = atoi(argv[1]);
+        Win[1] = atoi(argv[2]);
+    }
+
+
+    // Initialize data structs, glut, glui, and opengl
+	initDS();
+    initGlut(argc, argv);
+    initGlui();
+    initGl();
+
+    setupShaders();
+	setupTextures();
+    setupObjects();
+
+    /*************** RENDER TO TEXTURE VARIABLES ****************
+	glGenFramebuffers(1, &FramebufferName);
+	glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
+
+	// The texture we're going to render to
+	glGenTextures(1, &renderedTexture);
+
+	// "Bind" the newly created texture : all future texture functions will modify this texture
+	glBindTexture(GL_TEXTURE_2D, renderedTexture);
+
+	// Give an empty image to OpenGL ( the last "0" means "empty" )
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1024, 768, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+
+	// Poor filtering
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+
+	GLuint depthrenderbuffer;
+	glGenRenderbuffers(1, &depthrenderbuffer);
+	glBindRenderbuffer(GL_RENDERBUFFER, depthrenderbuffer);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, 1024, 768);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthrenderbuffer);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderedTexture, 0);
+
+	// Set the list of draw buffers.
+	GLenum DrawBuffers[1] = {GL_COLOR_ATTACHMENT0};
+	glDrawBuffers(1, DrawBuffers); // "1" is the size of DrawBuffers
+
+	// Always check that our framebuffer is ok
+	if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+	{
+        printf("something is wrong with the buffer\n");
+    }
+    /*************** RENDER TO TEXTURE VARIABLES ****************/
+    // Invoke the standard GLUT main event loop
+    glutMainLoop();
+
+    return 0;         // never reached
+}
+
 
 // Create / initialize global data structures
 void initDS()
@@ -919,7 +989,7 @@ void initGl(void)
 {
     // glClearColor (red, green, blue, alpha)
     // Ignore the meaning of the 'alpha' value for now
-    glClearColor(0.7f,0.7f,0.7f,1.0f);
+    glClearColor(0.7f,0.7f,0.9f,1.0f);
 }
 
 
@@ -1021,11 +1091,120 @@ void reshape(int w, int h)
 	gluPerspective(45.0, (GLdouble)Win[0]/(GLdouble)Win[1], NEAR_CLIP, FAR_CLIP);
 }
 
+
 glm::mat4 model;
 
 glm::mat4 Projection;
 
 glm::mat4 View;
+// display callback
+//
+// README: This gets called by the event handler
+// to draw the scene, so this is where you need
+// to build your scene -- make your changes and
+// additions here. All rendering happens in this
+// function. For Assignment 2, updates to the
+// joint DOFs (joint_ui_data) happen in the
+// animate() function.
+void display(void)
+{
+    printf("called display function\n");
+    // Clear the screen with the background colour
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glLoadIdentity();
+    glEnable( GL_TEXTURE_2D );
+
+    // Setup the model-view transformation matrix
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+	// Specify camera transformation
+	/*glTranslatef(camXPos, camYPos, camZPos);*/
+
+	// Get the time for the current animation step, if necessary
+	if( animate_mode )
+	{
+		float curTime = animationTimer->elapsed();
+
+		if( curTime >= keyframes[maxValidKeyframe].getTime() )
+		{
+			// Restart the animation
+			animationTimer->reset();
+			curTime = animationTimer->elapsed();
+		}
+
+		///////////////////////////////////////////////////////////
+		// README:
+		//   This statement loads the interpolated joint DOF vector
+		//   into the global 'joint_ui_data' variable. Use the
+		//   'joint_ui_data' variable below in your model code to
+		//   drive the model for animation.
+		///////////////////////////////////////////////////////////
+		// Get the interpolated joint DOFs
+		joint_ui_data->setDOFVector( getInterpolatedJointDOFS(curTime) );
+
+		// Update user interface
+		joint_ui_data->setTime(curTime);
+		glui_keyframe->sync_live();
+	}
+
+
+    ///////////////////////////////////////////////////////////
+    // DONE:
+	//   Modify this function to draw the scene.
+	//   This should include function calls that apply
+	//   the appropriate transformation matrices and render
+	//   the individual body parts.
+	//   Use the 'joint_ui_data' data structure to obtain
+	//   the joint DOFs to specify your transformations.
+	//   Sample code is provided below and demonstrates how
+	//   to access the joint DOF values. This sample code
+	//   should be replaced with your own.
+	//   Use the 'renderStyle' variable and the associated
+	//   enumeration to determine how the geometry should be
+	//   rendered.
+    ///////////////////////////////////////////////////////////
+
+	// SAMPLE CODE **********
+	//
+
+    glClearDepth(1.0f);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_DEPTH_TEST);
+	// determine render style and set glPolygonMode appropriately
+    glColor3f(1.0, 1.0, 1.0);
+
+    /*glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+    //glEnable(GL_RESCALE_NORMAL);
+
+    // light position set up
+    light_x = LIGHT_RADIUS*cosf(LIGHT_ANGLE*PI/180.0);
+    light_y = LIGHT_RADIUS*sinf(LIGHT_ANGLE*PI/180.0);
+
+    light_position[0] = light_x;
+    light_position[1] = light_y;
+    light_position[2] = LIGHT_Z;
+    light_position[3] = 0.0;
+
+    glLightfv(GL_LIGHT0, GL_POSITION, light_position);*/
+    drawOlaf();
+
+    // Execute any GL functions that are in the queue just to be safe
+    glFlush();
+
+	// Dump frame to file, if requested
+	if( frameToFile )
+	{
+		sprintf(filenameF, "frame%03d.ppm", frameNumber);
+		writeFrame(filenameF, false, false);
+	}
+
+    // Now, show the frame buffer that we just drew into.
+    // (this prevents flickering).
+    glutSwapBuffers();
+}
 
 void drawObj(GLuint vertexBuffer,
 			 GLuint uvBuffer,
@@ -1070,13 +1249,14 @@ void drawObj(GLuint vertexBuffer,
 	glDrawArrays(GL_TRIANGLES, 0, vertices.size());
 }
 
-
 void drawOlaf(void)
 {
     //glutPostRedisplay();
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
     // Use our shader
     glUseProgram(programID);
+
     //glUseProgram(particlesProgramID);
 
     // Send our transformation to the currently bound shader,
@@ -1084,7 +1264,58 @@ void drawOlaf(void)
     //glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
 
     // Bind our texture in Texture Unit 0
-	Projection = glm::perspective(45.0f, 4.0f / 3.0f, 0.1f, 100.0f);
+
+    /********************* RENDER TO TEXTURE ***********************
+    glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
+	glViewport(0,0,1024,768); // Render on the whole framebuffer, complete from the lower left corner to the upper right
+
+    glPushMatrix();
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture_landscape);
+        // Set our "myTextureSampler" sampler to user Texture Unit 0
+        glUniform1i(textureID, 0);
+        glRotatef(-90.0, 1.0, 0.0, 0.0);
+        glScalef(20.0, 20.0, 25.0);
+        glTranslatef(-0.5, -0.5, -0.1);
+        //glScalef(1.0, 1.0, -1.0);
+
+        glGetFloatv(GL_MODELVIEW_MATRIX, &model[0][0]);
+
+        // Our ModelViewProjection : multiplication of our 3 matrices
+        MVP = Projection * model; // Remember, matrix multiplication is the other way around
+        glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
+        // 1rst attribute buffer : vertices
+        glEnableVertexAttribArray(vertexPosition_modelspaceID);
+        glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer_landscape);
+        glVertexAttribPointer(
+            vertexPosition_modelspaceID,  // The attribute we want to configure
+            3,                            // size
+            GL_FLOAT,                     // type
+            GL_FALSE,                     // normalized?
+            0,                            // stride
+            (void*)0                      // array buffer offset
+        );
+
+        // 2nd attribute buffer : UVs
+        glEnableVertexAttribArray(vertexUVID);
+        glBindBuffer(GL_ARRAY_BUFFER, uvbuffer_landscape);
+        glVertexAttribPointer(
+            vertexUVID,                   // The attribute we want to configure
+            2,                            // size : U+V => 2
+            GL_FLOAT,                     // type
+            GL_FALSE,                     // normalized?
+            0,                            // stride
+            (void*)0                      // array buffer offset
+        );
+
+        // Draw the triangles !
+        glDrawArrays(GL_TRIANGLES, 0, vertices_landscape.size());
+    glPopMatrix();
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0,0,1024,768); // Render on the whole framebuffer, complete from the lower left corner to the upper right*/
+
+    Projection = glm::perspective(45.0f, 4.0f / 3.0f, 0.1f, 100.0f);
 
     View = glm::lookAt(
                         glm::vec3(0,0,5), // Camera is at (4,3,3), in World Space
@@ -1097,135 +1328,6 @@ void drawOlaf(void)
                                    LIGHT_Z);
     glUniform3f(lightID, lightPos.x, lightPos.y, lightPos.z);
     glUniformMatrix4fv(viewMatrixID, 1, GL_FALSE, &View[0][0]);
-
-    /********************* RENDER TO TEXTURE ***********************
-    glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
-	glViewport(0,0,1024,768); // Render on the whole framebuffer, complete from the lower left corner to the upper right
-
-    /*glPushMatrix();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, texture_landscape);
-		// Set our "myTextureSampler" sampler to user Texture Unit 0
-		glUniform1i(textureID, 0);
-
-		glRotatef(-90.0, 1.0, 0.0, 0.0);
-		glScalef(20.0, 20.0, 25.0);
-		glTranslatef(-0.5, -0.5, -0.1);
-		//model = glm::mat4(1.0);
-		glGetFloatv(GL_MODELVIEW_MATRIX, &model[0][0]);
-
-		// Our ModelViewProjection : multiplication of our 3 matrices
-		MVP = Projection * View * model; // Remember, matrix multiplication is the other way around
-		glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
-		glUniformMatrix4fv(modelMatrixID, 1, GL_FALSE, &model[0][0]);
-
-		// inverse and transpose the model matrix
-		glm::inverse(model);
-		glm::transpose(model);
-		glUniformMatrix4fv(inverseTransposeModelMatrixID, 1, GL_FALSE, &model[0][0]);
-
-		drawObj(vertexbuffer_landscape, uvbuffer_landscape, normalbuffer_landscape, vertices_landscape);
-	glPopMatrix();*/
-
-	/********************* DRAW PARTICLES ***********************
-	// Use our shader
-	glm::mat4 ViewProjectionMatrix = Projection * View;
-	int ParticlesCount;
-	simulateParticles(ParticlesCount);
-	//printf("%d ",ParticlesCount);
-
-
-	// Update the buffers that OpenGL uses for rendering.
-	// There are much more sophisticated means to stream data from the CPU to the GPU,
-	// but this is outside the scope of this tutorial.
-	// http://www.opengl.org/wiki/Buffer_Object_Streaming
-
-
-	glBindBuffer(GL_ARRAY_BUFFER, particles_position_buffer);
-	glBufferData(GL_ARRAY_BUFFER, MaxParticles * 4 * sizeof(GLfloat), NULL, GL_STREAM_DRAW); // Buffer orphaning, a common way to improve streaming perf. See above link for details.
-	glBufferSubData(GL_ARRAY_BUFFER, 0, ParticlesCount * sizeof(GLfloat) * 4, g_particule_position_size_data);
-
-	glBindBuffer(GL_ARRAY_BUFFER, particles_color_buffer);
-	glBufferData(GL_ARRAY_BUFFER, MaxParticles * 4 * sizeof(GLubyte), NULL, GL_STREAM_DRAW); // Buffer orphaning, a common way to improve streaming perf. See above link for details.
-	glBufferSubData(GL_ARRAY_BUFFER, 0, ParticlesCount * sizeof(GLubyte) * 4, g_particule_color_data);
-
-
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-
-	// Bind our texture in Texture Unit 0
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, particlesTexture);
-	// Set our "myTextureSampler" sampler to user Texture Unit 0
-	glUniform1i(particlesTextureID, 0);
-
-	// Same as the billboards tutorial
-	glUniform3f(CameraRight_worldspace_ID, View[0][0], View[1][0], View[2][0]);
-	glUniform3f(CameraUp_worldspace_ID   , View[0][1], View[1][1], View[2][1]);
-
-	glUniformMatrix4fv(ViewProjMatrixID, 1, GL_FALSE, &ViewProjectionMatrix[0][0]);
-	glUniform1i(isParticleID, 1);
-	// 1rst attribute buffer : vertices
-	glEnableVertexAttribArray(squareVerticesID);
-	glBindBuffer(GL_ARRAY_BUFFER, particles_vertex_buffer);
-	glVertexAttribPointer(
-		squareVerticesID,                  // attribute. No particular reason for 0, but must match the layout in the shader.
-		3,                  // size
-		GL_FLOAT,           // type
-		GL_FALSE,           // normalized?
-		0,                  // stride
-		(void*)0            // array buffer offset
-	);
-
-	// 2nd attribute buffer : positions of particles' centers
-	glEnableVertexAttribArray(xyzsID);
-	glBindBuffer(GL_ARRAY_BUFFER, particles_position_buffer);
-	glVertexAttribPointer(
-		xyzsID,                                // attribute. No particular reason for 1, but must match the layout in the shader.
-		4,                                // size : x + y + z + size => 4
-		GL_FLOAT,                         // type
-		GL_FALSE,                         // normalized?
-		0,                                // stride
-		(void*)0                          // array buffer offset
-	);
-
-	// 3rd attribute buffer : particles' colors
-	glEnableVertexAttribArray(colorID);
-	glBindBuffer(GL_ARRAY_BUFFER, particles_color_buffer);
-	glVertexAttribPointer(
-		colorID,                                // attribute. No particular reason for 1, but must match the layout in the shader.
-		4,                                // size : r + g + b + a => 4
-		GL_UNSIGNED_BYTE,                 // type
-		GL_TRUE,                          // normalized?    *** YES, this means that the unsigned char[4] will be accessible with a vec4 (floats) in the shader ***
-		0,                                // stride
-		(void*)0                          // array buffer offset
-	);
-
-	// These functions are specific to glDrawArrays*Instanced*.
-	// The first parameter is the attribute buffer we're talking about.
-	// The second parameter is the "rate at which generic vertex attributes advance when rendering multiple instances"
-	// http://www.opengl.org/sdk/docs/man/xhtml/glVertexAttribDivisor.xml
-	glVertexAttribDivisorARB(squareVerticesID, 0); // particles vertices : always reuse the same 4 vertices -> 0
-	glVertexAttribDivisorARB(xyzsID, 1); // positions : one per quad (its center)                 -> 1
-	glVertexAttribDivisorARB(colorID, 1); // color : one per quad                                  -> 1
-
-	// Draw the particules !
-	// This draws many times a small triangle_strip (which looks like a quad).
-	// This is equivalent to :
-	// for(i in ParticlesCount) : glDrawArrays(GL_TRIANGLE_STRIP, 0, 4),
-	// but faster.
-	glDrawArraysInstancedARB(GL_TRIANGLE_STRIP, 0, 4, ParticlesCount);
-
-	glDisableVertexAttribArray(squareVerticesID);
-	glDisableVertexAttribArray(xyzsID);
-	glDisableVertexAttribArray(colorID);
-
-    //glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	//glViewport(0,0,1024,768); // Render on the whole framebuffer, complete from the lower left corner to the upper right*/
-
-	//glUseProgram(programID);
-
 
     /********************* DRAW BACKGROUND ***********************/
     glPushMatrix();
@@ -1254,7 +1356,7 @@ void drawOlaf(void)
 
     glPopMatrix();
 
-    /********************* DRAW LANDSCAPE ***********************/
+    /********************* DRAW LANDSCAPE ***********************
     glPushMatrix();
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture_landscape);
@@ -1280,7 +1382,7 @@ void drawOlaf(void)
         drawObj(vertexbuffer_landscape, uvbuffer_landscape, normalbuffer_landscape, vertices_landscape);
     glPopMatrix();
 
-    /********************* DRAW HEAD **********************/
+    /********************* DRAW HEAD ***********************/
     glPushMatrix();
 
         // Bind our texture in Texture Unit 0
@@ -1354,75 +1456,60 @@ void drawOlaf(void)
 
 		drawObj(vertexbuffer_body, uvbuffer_body, normalbuffer_body, vertices_body);
 	glPopMatrix();
+    /********************* DRAW WATER ***********************
+    glPushMatrix();
+        glUseProgram(renderedProgramID);
 
-	/*************** DRAW BACK *************
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	glViewport(0,0,1024,768);
-
-	glPushMatrix();
-
-		glTranslatef(0.0, 2.5, -7.0);
-		glScalef(10.0, 5.0, 0.0);
-		glGetFloatv(GL_MODELVIEW_MATRIX, &model[0][0]);
-
-		// Our ModelViewProjection : multiplication of our 3 matrices
-		MVP = Projection * View * model; // Remember, matrix multiplication is the other way around
-		glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
-
-
-		glUniformMatrix4fv(modelMatrixID, 1, GL_FALSE, &model[0][0]);
-
-		glm::inverse(model);
-		glm::transpose(model);
-		glUniformMatrix4fv(inverseTransposeModelMatrixID, 1, GL_FALSE, &model[0][0]);
-		glUniform1i(isRenderedTextureID, 1);
-
+        // Bind our texture in Texture Unit 0
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, renderedTexture);
-		// Set our "myTextureSampler" sampler to user Texture Unit 0
-		glUniform1i(textureID, 0);
-
-		drawObj(vertexbuffer_background, uvbuffer_background, normalbuffer_background, vertices_background);
-
-	glPopMatrix();*/
-    glDisableVertexAttribArray(vertexPosition_modelspaceID);
-    glDisableVertexAttribArray(vertexUVID);
-    glDisableVertexAttribArray(vertexNormal_modelspaceID);
-}
-
-void drawSnow()
-{
-	glClearColor(0.0, 0.0, 0.0, 1.0);
-
-	Projection = glm::perspective(45.0f, 4.0f / 3.0f, 0.1f, 100.0f);
-
-    View = glm::lookAt(
-                        glm::vec3(0,3,3), // Camera is at (4,3,3), in World Space
-                        glm::vec3(0,0,0), // and looks at the origin
-                        glm::vec3(0,1,0)  // Head is up (set to 0,-1,0 to look upside-down)
-                   );
-
-    glm::vec3 lightPos = glm::vec3(LIGHT_RADIUS*cosf(LIGHT_ANGLE*PI/180.0),
-                                   LIGHT_RADIUS*sinf(LIGHT_ANGLE*PI/180.0),
-                                   LIGHT_Z);
-    glUniform3f(lightID, lightPos.x, lightPos.y, lightPos.z);
-    glUniformMatrix4fv(viewMatrixID, 1, GL_FALSE, &View[0][0]);
-	/********************* DRAW PARTICLES ***********************/
-	// Use our shader
-	glUseProgram(particlesProgramID);
-	glm::mat4 ViewProjectionMatrix = Projection * View;
-	int ParticlesCount;
-	simulateParticles(ParticlesCount);
-	//printf("%d ",ParticlesCount);
+		// Set our "renderedTexture" sampler to user Texture Unit 0
+		glUniform1i(renderedTextureID, 0);
 
 
-	// Update the buffers that OpenGL uses for rendering.
-	// There are much more sophisticated means to stream data from the CPU to the GPU,
-	// but this is outside the scope of this tutorial.
-	// http://www.opengl.org/wiki/Buffer_Object_Streaming
+        //glScalef(20.0, 20.0, 0.0);
+        glRotatef(-75.0, 1.0, 0.0, 0.0);
+        glGetFloatv(GL_MODELVIEW_MATRIX, &model[0][0]);
 
+        // Our ModelViewProjection : multiplication of our 3 matrices
+        MVP = Projection * model; // Remember, matrix multiplication is the other way around
+        glUniformMatrix4fv(renderedMatrixID, 1, GL_FALSE, &MVP[0][0]);
+        // 1rst attribute buffer : vertices
+        glEnableVertexAttribArray(rendered_vertexPosID);
+        glBindBuffer(GL_ARRAY_BUFFER, vertexbuffer_background);
+        glVertexAttribPointer(
+            vertexPosition_modelspaceID,  // The attribute we want to configure
+            3,                            // size
+            GL_FLOAT,                     // type
+            GL_FALSE,                     // normalized?
+            0,                            // stride
+            (void*)0                      // array buffer offset
+        );
 
-	glBindBuffer(GL_ARRAY_BUFFER, particles_position_buffer);
+        // 2nd attribute buffer : UVs
+        glEnableVertexAttribArray(vertexUVID);
+        glBindBuffer(GL_ARRAY_BUFFER, uvbuffer_background);
+        glVertexAttribPointer(
+            vertexUVID,                   // The attribute we want to configure
+            2,                            // size : U+V => 2
+            GL_FLOAT,                     // type
+            GL_FALSE,                     // normalized?
+            0,                            // stride
+            (void*)0                      // array buffer offset
+        );
+
+        // Draw the triangles !
+        glDrawArrays(GL_TRIANGLES, 0, vertices_background.size());
+    glPopMatrix();*/
+
+    /********************* DRAW PARTICLES ***********************/
+
+    glm::mat4 ViewProjectionMatrix = Projection * View;
+    int ParticlesCount;
+    simulateParticles(ParticlesCount);
+    printf("ParticlesCount is: %d\n", ParticlesCount);
+
+    glBindBuffer(GL_ARRAY_BUFFER, particles_position_buffer);
 	glBufferData(GL_ARRAY_BUFFER, MaxParticles * 4 * sizeof(GLfloat), NULL, GL_STREAM_DRAW); // Buffer orphaning, a common way to improve streaming perf. See above link for details.
 	glBufferSubData(GL_ARRAY_BUFFER, 0, ParticlesCount * sizeof(GLfloat) * 4, g_particule_position_size_data);
 
@@ -1431,13 +1518,26 @@ void drawSnow()
 	glBufferSubData(GL_ARRAY_BUFFER, 0, ParticlesCount * sizeof(GLubyte) * 4, g_particule_color_data);
 
 
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    /*for(int i = 0; i < ParticlesCount; i++)
+    {
+        printf("position is: %f, %f, %f\n", g_particule_position_size_data[4*i+0],
+                                            g_particule_position_size_data[4*i+1],
+                                            g_particule_position_size_data[4*i+2]);
 
+        printf("color is: %d, %d, %d\n", g_particule_color_data[4*i+0],
+                                         g_particule_color_data[4*i+1],
+                                         g_particule_color_data[4*i+2]);
+    }*/
+
+	//glEnable(GL_BLEND);
+	//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Use our shader
+	//glUseProgram(particlesProgramID);
 
 	// Bind our texture in Texture Unit 0
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, particlesTexture);
+	glBindTexture(GL_TEXTURE_2D, texture_landscape);
 	// Set our "myTextureSampler" sampler to user Texture Unit 0
 	glUniform1i(particlesTextureID, 0);
 
@@ -1446,7 +1546,8 @@ void drawSnow()
 	glUniform3f(CameraUp_worldspace_ID   , View[0][1], View[1][1], View[2][1]);
 
 	glUniformMatrix4fv(ViewProjMatrixID, 1, GL_FALSE, &ViewProjectionMatrix[0][0]);
-	glUniform1i(isParticleID, 1);
+
+
 	// 1rst attribute buffer : vertices
 	glEnableVertexAttribArray(squareVerticesID);
 	glBindBuffer(GL_ARRAY_BUFFER, particles_vertex_buffer);
@@ -1483,11 +1584,7 @@ void drawSnow()
 		(void*)0                          // array buffer offset
 	);
 
-	// These functions are specific to glDrawArrays*Instanced*.
-	// The first parameter is the attribute buffer we're talking about.
-	// The second parameter is the "rate at which generic vertex attributes advance when rendering multiple instances"
-	// http://www.opengl.org/sdk/docs/man/xhtml/glVertexAttribDivisor.xml
-	glVertexAttribDivisorARB(squareVerticesID, 0); // particles vertices : always reuse the same 4 vertices -> 0
+    glVertexAttribDivisorARB(squareVerticesID, 0); // particles vertices : always reuse the same 4 vertices -> 0
 	glVertexAttribDivisorARB(xyzsID, 1); // positions : one per quad (its center)                 -> 1
 	glVertexAttribDivisorARB(colorID, 1); // color : one per quad                                  -> 1
 
@@ -1498,265 +1595,102 @@ void drawSnow()
 	// but faster.
 	glDrawArraysInstancedARB(GL_TRIANGLE_STRIP, 0, 4, ParticlesCount);
 
-
 	glDisableVertexAttribArray(squareVerticesID);
 	glDisableVertexAttribArray(xyzsID);
 	glDisableVertexAttribArray(colorID);
+
+    glDisableVertexAttribArray(vertexPosition_modelspaceID);
+    glDisableVertexAttribArray(vertexUVID);
+    glDisableVertexAttribArray(vertexNormal_modelspaceID);
 }
 
 void simulateParticles(int &ParticlesCount)
 {
-	double delta = 0.016;
-	glm::vec3 CameraPosition(glm::inverse(View)[3]);
+    //printf("called simulateParticles function\n");
+    int newparticles = (int)(0.016f*10000.0);
+    glm::vec3 CameraPosition(glm::inverse(View)[3]);
+    double delta = 0.016;
+    for(int i=0; i<newparticles; i++){
+			int particleIndex = FindUnusedParticle(ParticlesContainer, LastUsedParticle);
+			ParticlesContainer[particleIndex].life = 5.0f; // This particle will live 5 seconds.
+			ParticlesContainer[particleIndex].pos = glm::vec3(0,0,-2.0f);
 
-	int newparticles = (int)(0.016f*1000.0);
+			float spread = 1.5f;
+			glm::vec3 maindir = glm::vec3(0.0f, 1.0f, 0.0f);
+			// Very bad way to generate a random direction;
+			// See for instance http://stackoverflow.com/questions/5408276/python-uniform-spherical-distribution instead,
+			// combined with some user-controlled parameters (main direction, spread, etc)
+			glm::vec3 randomdir = glm::vec3(
+				(rand()%2000 - 1000.0f)/1000.0f,
+				(rand()%2000 - 1000.0f)/1000.0f,
+				(rand()%2000 - 1000.0f)/1000.0f
+			);
 
-	for(int i=0; i<newparticles; i++){
-		int particleIndex = FindUnusedParticle();
-		ParticlesContainer[particleIndex].life = 5.0f; // This particle will live 5 seconds.
-		int x = (rand() % 10) - 5;
-		ParticlesContainer[particleIndex].pos = glm::vec3(x,2.0,-2.0f);
-
-		float spread = 1.5f;
-		glm::vec3 maindir = glm::vec3(0.0f, 1.0f, 0.0f);
-		// Very bad way to generate a random direction;
-		// See for instance http://stackoverflow.com/questions/5408276/python-uniform-spherical-distribution instead,
-		// combined with some user-controlled parameters (main direction, spread, etc)
-		glm::vec3 randomdir = glm::vec3(
-			(rand()%2000 - 1000.0f)/1000.0f,
-			(rand()%2000 - 1000.0f)/1000.0f,
-			(rand()%2000 - 1000.0f)/1000.0f
-		);
-
-		ParticlesContainer[particleIndex].speed = maindir + randomdir*spread;
+			ParticlesContainer[particleIndex].speed = maindir + randomdir*spread;
 
 
-		// Very bad way to generate a random color
-		ParticlesContainer[particleIndex].r = rand() % 256;
-		ParticlesContainer[particleIndex].g = rand() % 256;
-		ParticlesContainer[particleIndex].b = rand() % 256;
-		ParticlesContainer[particleIndex].a = (rand() % 256) / 3;
+			// Very bad way to generate a random color
+			ParticlesContainer[particleIndex].r = rand() % 256;
+			ParticlesContainer[particleIndex].g = rand() % 256;
+			ParticlesContainer[particleIndex].b = rand() % 256;
+			ParticlesContainer[particleIndex].a = (rand() % 256) / 3;
 
-		ParticlesContainer[particleIndex].size = (rand()%1000)/20000.0f + 0.1f;
-
-	}
-
-	// Simulate all particles
-	ParticlesCount = 0;
-	for(int i=0; i<MaxParticles; i++){
-
-		Particle& p = ParticlesContainer[i]; // shortcut
-
-		if(p.life > 0.0f){
-
-			// Decrease life
-			p.life -= delta;
-			if (p.life > 0.0f){
-
-				// Simulate simple physics : gravity only, no collisions
-				p.speed += glm::vec3(0.0f,-9.81f, 0.0f) * (float)delta * 0.005f;
-				p.pos += p.speed * (float)delta;
-				p.cameradistance = glm::length2( p.pos - CameraPosition );
-				//ParticlesContainer[i].pos += glm::vec3(0.0f,10.0f, 0.0f) * (float)delta;
-
-				// Fill the GPU buffer
-				g_particule_position_size_data[4*ParticlesCount+0] = p.pos.x;
-				g_particule_position_size_data[4*ParticlesCount+1] = p.pos.y;
-				g_particule_position_size_data[4*ParticlesCount+2] = p.pos.z;
-
-				g_particule_position_size_data[4*ParticlesCount+3] = p.size;
-
-				g_particule_color_data[4*ParticlesCount+0] = p.r;
-				g_particule_color_data[4*ParticlesCount+1] = p.g;
-				g_particule_color_data[4*ParticlesCount+2] = p.b;
-				g_particule_color_data[4*ParticlesCount+3] = p.a;
+			ParticlesContainer[particleIndex].size = (rand()%1000)/2000.0f + 0.1f;
 
 
-			}else{
-				// Particles that just died will be put at the end of the buffer in SortParticles();
-				p.cameradistance = -1.0f;
+		}
+
+		// Simulate all particles
+		ParticlesCount = 0;
+		for(int i=0; i<MaxParticles; i++){
+
+			Particle& p = ParticlesContainer[i]; // shortcut
+
+			if(p.life > 0.0f){
+
+				// Decrease life
+				p.life -= delta;
+				if (p.life > 0.0f){
+
+					// Simulate simple physics : gravity only, no collisions
+					p.speed += glm::vec3(0.0f,-9.81f, 0.0f) * (float)delta * 0.5f;
+					p.pos += p.speed * (float)delta;
+					p.cameradistance = glm::length2( p.pos - CameraPosition );
+					//ParticlesContainer[i].pos += glm::vec3(0.0f,10.0f, 0.0f) * (float)delta;
+					// Fill the GPU buffer
+					g_particule_position_size_data[4*ParticlesCount+0] = p.pos.x;
+					g_particule_position_size_data[4*ParticlesCount+1] = p.pos.y;
+					g_particule_position_size_data[4*ParticlesCount+2] = p.pos.z;
+
+					g_particule_position_size_data[4*ParticlesCount+3] = p.size;
+
+					g_particule_color_data[4*ParticlesCount+0] = p.r;
+					g_particule_color_data[4*ParticlesCount+1] = p.g;
+					g_particule_color_data[4*ParticlesCount+2] = p.b;
+					g_particule_color_data[4*ParticlesCount+3] = p.a;
+
+
+
+				}else{
+					// Particles that just died will be put at the end of the buffer in SortParticles();
+					p.cameradistance = -1.0f;
+				}
+
+				ParticlesCount++;
+
 			}
-
-			ParticlesCount++;
-
-		}
-	}
-
-	SortParticles();
-}
-
-int oldTimeSinceStart = 0;
-int deltaTime = 0;
-void display(void)
-{
-	int timeSinceStart = glutGet(GLUT_ELAPSED_TIME);
-	glutPostRedisplay();
-    // Clear the screen with the background colour
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glLoadIdentity();
-    glEnable( GL_TEXTURE_2D );
-
-    // Setup the model-view transformation matrix
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-	// Specify camera transformation
-	/*glTranslatef(camXPos, camYPos, camZPos);*/
-
-	// Get the time for the current animation step, if necessary
-	if( animate_mode )
-	{
-		float curTime = animationTimer->elapsed();
-
-		if( curTime >= keyframes[maxValidKeyframe].getTime() )
-		{
-			// Restart the animation
-			animationTimer->reset();
-			curTime = animationTimer->elapsed();
 		}
 
-		///////////////////////////////////////////////////////////
-		// README:
-		//   This statement loads the interpolated joint DOF vector
-		//   into the global 'joint_ui_data' variable. Use the
-		//   'joint_ui_data' variable below in your model code to
-		//   drive the model for animation.
-		///////////////////////////////////////////////////////////
-		// Get the interpolated joint DOFs
-		joint_ui_data->setDOFVector( getInterpolatedJointDOFS(curTime) );
+		SortParticles(ParticlesContainer);
 
-		// Update user interface
-		joint_ui_data->setTime(curTime);
-		glui_keyframe->sync_live();
-	}
+        /*for(int i = 0; i < ParticlesCount; i++)
+        {
+            printf("particle color is: %d, %d, %d\n", g_particule_color_data[4*i+0],
+                                                      g_particule_color_data[4*i+1],
+                                                      g_particule_color_data[4*i+2]);
 
 
-    ///////////////////////////////////////////////////////////
-    // DONE:
-	//   Modify this function to draw the scene.
-	//   This should include function calls that apply
-	//   the appropriate transformation matrices and render
-	//   the individual body parts.
-	//   Use the 'joint_ui_data' data structure to obtain
-	//   the joint DOFs to specify your transformations.
-	//   Sample code is provided below and demonstrates how
-	//   to access the joint DOF values. This sample code
-	//   should be replaced with your own.
-	//   Use the 'renderStyle' variable and the associated
-	//   enumeration to determine how the geometry should be
-	//   rendered.
-    ///////////////////////////////////////////////////////////
-
-	// SAMPLE CODE **********
-	//
-
-    glClearDepth(1.0f);
-    glDepthFunc(GL_LESS);
-    glEnable(GL_DEPTH_TEST);
-	// determine render style and set glPolygonMode appropriately
-    glColor3f(1.0, 1.0, 1.0);
-
-	if(deltaTime > 10000)
-	{
-		drawSnow();
-	}
-	else
-	{
-    	drawOlaf();
-	}
-
-	//drawOlaf();
-	deltaTime += timeSinceStart - oldTimeSinceStart;
-
-	//computeMatricesFromInputs();
-	/*Projection = glm::perspective(45.0f, 4.0f / 3.0f, 0.1f, 100.0f);
-	View = glm::lookAt(
-						   glm::vec3(0,0,5), // Camera is at (4,3,3), in World Space
-						   glm::vec3(0,0,0), // and looks at the origin
-						   glm::vec3(0,1,0)  // Head is up (set to 0,-1,0 to look upside-down)
-					   );*/
-
-	// We will need the camera's position in order to sort the particles
-	// w.r.t the camera's distance.
-	// There should be a getCameraPosition() function in common/controls.cpp,
-	// but this works too.
-
-
-    // Execute any GL functions that are in the queue just to be safe
-    glFlush();
-
-    glutSwapBuffers();
-	oldTimeSinceStart = timeSinceStart;
-}
-
-int main(int argc, char** argv)
-{
-
-    // Process program arguments
-    if(argc != 3) {
-        printf("Usage: demo [width] [height]\n");
-        printf("Using 640x480 window by default...\n");
-        Win[0] = 1024;
-        Win[1] = 768;
-    } else {
-        Win[0] = atoi(argv[1]);
-        Win[1] = atoi(argv[2]);
-    }
-
-
-    // Initialize data structs, glut, glui, and opengl
-	initDS();
-    initGlut(argc, argv);
-    initGlui();
-    initGl();
-
-    setupShaders();
-	setupTextures();
-    setupObjects();
-
-	/*************** RENDER TO TEXTURE VARIABLES ****************/
-	glGenFramebuffers(1, &FramebufferName);
-	//glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
-
-	// The texture we're going to render to
-	glGenTextures(1, &renderedTexture);
-
-	// "Bind" the newly created texture : all future texture functions will modify this texture
-	glBindTexture(GL_TEXTURE_2D, renderedTexture);
-
-	// Give an empty image to OpenGL ( the last "0" means "empty" )
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1024, 768, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
-
-	// Poor filtering
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-
-	GLuint depthrenderbuffer;
-	glGenRenderbuffers(1, &depthrenderbuffer);
-	glBindRenderbuffer(GL_RENDERBUFFER, depthrenderbuffer);
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, 1024, 768);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthrenderbuffer);
-
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderedTexture, 0);
-
-	// Set the list of draw buffers.
-	GLenum DrawBuffers[1] = {GL_COLOR_ATTACHMENT0};
-	glDrawBuffers(1, DrawBuffers); // "1" is the size of DrawBuffers
-
-	// Always check that our framebuffer is ok
-	if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-	{
-		printf("something is wrong with the buffer\n");
-	}
-	/*************** RENDER TO TEXTURE VARIABLES ****************/
-
-	// Invoke the standard GLUT main event loop
-    glutMainLoop();
-
-    return 0;         // never reached
+        }*/
 }
 
 // Handles mouse button pressed / released events
