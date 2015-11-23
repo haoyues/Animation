@@ -179,7 +179,7 @@ void drawObj(GLuint vertexBuffer,
 			 GLuint uvBuffer,
 			 GLuint normalBuffer,
 			 std::vector<glm::vec3> vertices);
-void drawOlaf();
+void drawOlaf(bool renderToTexture, float scale_x, float scale_y);
 void drawSnow();
 void simulateParticles(int &ParticlesCount);
 //void background();
@@ -189,7 +189,7 @@ void writeFrame(char* filename, bool pgm, bool frontBuffer);
 
 
 /******************** FUNCTIONS ************************/
-
+bool renderToTexture = false;
 const int MaxParticles = 100000;
 Particle ParticlesContainer[MaxParticles];
 int LastUsedParticle = 0;
@@ -919,7 +919,7 @@ void initGl(void)
 {
     // glClearColor (red, green, blue, alpha)
     // Ignore the meaning of the 'alpha' value for now
-    glClearColor(0.7f,0.7f,0.7f,1.0f);
+    glClearColor(0.0f,0.0f,0.0f,1.0f);
 }
 
 
@@ -1071,7 +1071,7 @@ void drawObj(GLuint vertexBuffer,
 }
 
 
-void drawOlaf(void)
+void drawOlaf(bool renderToTexture, float scale_x, float scale_y)
 {
     //glutPostRedisplay();
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1098,10 +1098,17 @@ void drawOlaf(void)
     glUniform3f(lightID, lightPos.x, lightPos.y, lightPos.z);
     glUniformMatrix4fv(viewMatrixID, 1, GL_FALSE, &View[0][0]);
 
-    /********************* RENDER TO TEXTURE ***********************
-    glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
-	glViewport(0,0,1024,768); // Render on the whole framebuffer, complete from the lower left corner to the upper right
-
+    /********************* RENDER TO TEXTURE ***********************/
+	if(renderToTexture)
+	{
+	    glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
+		glViewport(0,0,1024,768); // Render on the whole framebuffer, complete from the lower left corner to the upper right
+	}
+	else
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glViewport(0, 0, 1024, 768);
+	}
     /*glPushMatrix();
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, texture_landscape);
@@ -1355,36 +1362,40 @@ void drawOlaf(void)
 		drawObj(vertexbuffer_body, uvbuffer_body, normalbuffer_body, vertices_body);
 	glPopMatrix();
 
-	/*************** DRAW BACK *************
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	glViewport(0,0,1024,768);
+	/*************** DRAW BACK *************/
+	if(renderToTexture)
+	{
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glViewport(0,0,1024,768);
 
-	glPushMatrix();
+		glPushMatrix();
 
-		glTranslatef(0.0, 2.5, -7.0);
-		glScalef(10.0, 5.0, 0.0);
-		glGetFloatv(GL_MODELVIEW_MATRIX, &model[0][0]);
+			glTranslatef(0.0, 2.5, -7.0);
+			glScalef(scale_x, scale_y, 1.0);
+			glGetFloatv(GL_MODELVIEW_MATRIX, &model[0][0]);
 
-		// Our ModelViewProjection : multiplication of our 3 matrices
-		MVP = Projection * View * model; // Remember, matrix multiplication is the other way around
-		glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
+			// Our ModelViewProjection : multiplication of our 3 matrices
+			MVP = Projection * View * model; // Remember, matrix multiplication is the other way around
+			glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
 
 
-		glUniformMatrix4fv(modelMatrixID, 1, GL_FALSE, &model[0][0]);
+			glUniformMatrix4fv(modelMatrixID, 1, GL_FALSE, &model[0][0]);
 
-		glm::inverse(model);
-		glm::transpose(model);
-		glUniformMatrix4fv(inverseTransposeModelMatrixID, 1, GL_FALSE, &model[0][0]);
-		glUniform1i(isRenderedTextureID, 1);
+			glm::inverse(model);
+			glm::transpose(model);
+			glUniformMatrix4fv(inverseTransposeModelMatrixID, 1, GL_FALSE, &model[0][0]);
+			glUniform1i(isRenderedTextureID, 1);
 
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, renderedTexture);
-		// Set our "myTextureSampler" sampler to user Texture Unit 0
-		glUniform1i(textureID, 0);
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, renderedTexture);
+			// Set our "myTextureSampler" sampler to user Texture Unit 0
+			glUniform1i(textureID, 0);
 
-		drawObj(vertexbuffer_background, uvbuffer_background, normalbuffer_background, vertices_background);
+			drawObj(vertexbuffer_background, uvbuffer_background, normalbuffer_background, vertices_background);
 
-	glPopMatrix();*/
+		glPopMatrix();
+	}
+
     glDisableVertexAttribArray(vertexPosition_modelspaceID);
     glDisableVertexAttribArray(vertexUVID);
     glDisableVertexAttribArray(vertexNormal_modelspaceID);
@@ -1656,13 +1667,24 @@ void display(void)
 	// determine render style and set glPolygonMode appropriately
     glColor3f(1.0, 1.0, 1.0);
 
-	if(deltaTime > 10000)
+	// exit scene: snowing
+	/*if(deltaTime > 10000)
 	{
 		drawSnow();
 	}
-	else
+	else*/
 	{
-    	drawOlaf();
+		renderToTexture = true;
+		float scale_x = 12.0 - deltaTime * 0.001;
+		float scale_y = 9.0 - (deltaTime * 0.001);
+		if(scale_x <= 0 || scale_y <= 0)
+		{
+			drawSnow();
+		}
+		else
+		{
+    		drawOlaf(renderToTexture, scale_x, scale_y);
+		}
 	}
 
 	//drawOlaf();
@@ -1716,7 +1738,7 @@ int main(int argc, char** argv)
 
 	/*************** RENDER TO TEXTURE VARIABLES ****************/
 	glGenFramebuffers(1, &FramebufferName);
-	//glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
+	glBindFramebuffer(GL_FRAMEBUFFER, FramebufferName);
 
 	// The texture we're going to render to
 	glGenTextures(1, &renderedTexture);
